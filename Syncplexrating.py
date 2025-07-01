@@ -49,206 +49,272 @@ error = 0
 not_found = 0
 
 def translate_path(plex_path):
-  return plex_path.replace(PLEX_PATH_PREFIX, HOST_PATH_PREFIX)
+    return plex_path.replace(PLEX_PATH_PREFIX, HOST_PATH_PREFIX)
 
 def plex_to_mp3_rating(plex_rating):
-  stars = round(plex_rating / 2)
-  if stars == 0:
-      return 0
-  elif stars == 1:
-      return 1
-  elif stars == 2:
-      return 64
-  elif stars == 3:
-      return 128
-  elif stars == 4:
-      return 196
-  else:
-      return 255
+    """Convert Plex rating (0-10) to MP3 POPM rating - Compatible with existing files"""
+    if plex_rating == 0:
+        return 0
+    elif plex_rating == 1:  # 0.5 stars
+        return 1
+    elif plex_rating == 2:  # 1 star
+        return 1
+    elif plex_rating == 3:  # 1.5 stars  
+        return 32
+    elif plex_rating == 4:  # 2 stars
+        return 64
+    elif plex_rating == 5:  # 2.5 stars
+        return 96
+    elif plex_rating == 6:  # 3 stars
+        return 128
+    elif plex_rating == 7:  # 3.5 stars
+        return 162
+    elif plex_rating == 8:  # 4 stars
+        return 196
+    elif plex_rating == 9:  # 4.5 stars
+        return 225
+    else:  # 5 stars (10)
+        return 255
 
 def mp3_to_plex_rating(mp3_rating):
-  if mp3_rating == 0:
-      return 0
-  elif mp3_rating == 1:
-      return 2
-  elif mp3_rating <= 64:
-      return 4
-  elif mp3_rating <= 128:
-      return 6
-  elif mp3_rating <= 196:
-      return 8
-  else:
-      return 10
+    """Convert MP3 POPM rating to Plex rating - Compatible with existing files"""
+    if mp3_rating == 0:
+        return 0
+    elif mp3_rating == 1:
+        return 2  # 1 star
+    elif mp3_rating <= 32:
+        return 3  # 1.5 stars
+    elif mp3_rating <= 64:
+        return 4  # 2 stars
+    elif mp3_rating <= 96:
+        return 5  # 2.5 stars
+    elif mp3_rating <= 128:
+        return 6  # 3 stars
+    elif mp3_rating <= 162:
+        return 7  # 3.5 stars
+    elif mp3_rating <= 196:
+        return 8  # 4 stars
+    elif mp3_rating <= 225:
+        return 9  # 4.5 stars
+    else:
+        return 10  # 5 stars
+
+def plex_to_flac_rating(plex_rating):
+    """Convert Plex rating (0-10) to FLAC rating (0-5 with decimals)"""
+    if plex_rating == 0:
+        return '0'
+    else:
+        # Convert to 0-5 scale with half-star precision
+        flac_rating = plex_rating / 2.0
+        return str(flac_rating)
+
+def flac_to_plex_rating(flac_rating):
+    """Convert FLAC rating to Plex rating (0-10) with validation"""
+    try:
+        rating_val = float(flac_rating)
+        # Convert from 0-5 scale to 0-10 scale
+        plex_rating = rating_val * 2.0
+        # Ensure the result is within Plex's valid range (0-10)
+        return min(10.0, max(0.0, plex_rating))
+    except (ValueError, TypeError):
+        # Handle non-numeric ratings
+        return None
 
 def get_rating(audiofile):
-  try:
-      popm = audiofile.tags.getall('POPM')
-      for pop in popm:
-          if pop.email == '':  # Check for a blank email
-              return pop.rating
-      return None
-  except Exception as e:
-      logger.error(f"Error getting rating: {str(e)}")
-      return None
+    try:
+        popm = audiofile.tags.getall('POPM')
+        for pop in popm:
+            if pop.email == '':  # Check for a blank email
+                return pop.rating
+        return None
+    except Exception as e:
+        logger.error(f"Error getting rating: {str(e)}")
+        return None
 
 def set_rating(audiofile, rating):
-  try:
-      popm_frames = audiofile.tags.getall('POPM')
-      
-      # Check if a POPM frame with a blank email already exists
-      popm = None
-      for frame in popm_frames:
-          if frame.email == '':  # Check for a blank email
-              popm = frame
-              break
-      
-      if popm is None:
-          # If no existing frame, create a new one with a blank email
-          popm = POPM(email='', rating=rating, count=0)
-          audiofile.tags.add(popm)
-      else:
-          # Update the existing frame
-          popm.rating = rating
-      
-      audiofile.save()
-  except Exception as e:
-      logger.error(f"Error setting rating: {str(e)}")
+    try:
+        popm_frames = audiofile.tags.getall('POPM')
+        
+        # Check if a POPM frame with a blank email already exists
+        pomp = None
+        for frame in popm_frames:
+            if frame.email == '':  # Check for a blank email
+                pomp = frame
+                break
+        
+        if pomp is None:
+            # If no existing frame, create a new one with a blank email
+            pomp = POPM(email='', rating=rating, count=0)
+            audiofile.tags.add(pomp)
+        else:
+            # Update the existing frame
+            pomp.rating = rating
+        
+        audiofile.save()
+    except Exception as e:
+        logger.error(f"Error setting rating: {str(e)}")
 
 def process_mp3(track, host_path):
-  global insync, justsynced, notag, error
-  
-  try:
-      audiofile = MP3(host_path, ID3=ID3)
-  except ID3NoHeaderError:
-      logger.error(f"Error: No ID3 tag found for {track.title}")
-      error += 1
-      return
-  except Exception as e:
-      logger.error(f"Error loading MP3 file: {track.title} - {str(e)}")
-      error += 1
-      return
+    global insync, justsynced, notag, error
+    
+    try:
+        audiofile = MP3(host_path, ID3=ID3)
+    except ID3NoHeaderError:
+        logger.error(f"Error: No ID3 tag found for {track.title}")
+        error += 1
+        return
+    except Exception as e:
+        logger.error(f"Error loading MP3 file: {track.title} - {str(e)}")
+        error += 1
+        return
 
-  current_rating = get_rating(audiofile)
+    current_rating = get_rating(audiofile)
 
-  if isinstance(track.userRating, float):
-      mp3_rating = plex_to_mp3_rating(track.userRating)
-      
-      if current_rating == mp3_rating:
-          insync += 1
-          logger.debug(f'Synchronized: {track.title} (MP3)')
-      else:
-          if not TEST_MODE:
-              set_rating(audiofile, mp3_rating)
-              
-              # Verify the change
-              audiofile = MP3(host_path, ID3=ID3)
-              new_rating = get_rating(audiofile)
-              
-              if new_rating == mp3_rating:
-                  justsynced += 1
-                  logger.debug(f'Updated and verified: {track.title} with rating {mp3_rating}')
-              else:
-                  error += 1
-                  logger.error(f'Failed to update: {track.title}. Expected {mp3_rating}, got {new_rating}')
-          else:
-              logger.debug(f'Would update: {track.title} with rating {mp3_rating}')
-  else:
-      if current_rating is not None:
-          plex_rating = mp3_to_plex_rating(current_rating)
-          if not TEST_MODE:
-              track.rate(plex_rating)
-          logger.debug(f'Updated Plex: {track.title} with rating {plex_rating}')
-          justsynced += 1
-      else:
-          notag += 1
-
-  # Final verification
-  audiofile = MP3(host_path, ID3=ID3)
-  final_rating = get_rating(audiofile)
+    if isinstance(track.userRating, float):
+        mp3_rating = plex_to_mp3_rating(track.userRating)
+        stars = track.userRating / 2.0
+        
+        if current_rating == mp3_rating:
+            insync += 1
+            logger.debug(f'Synchronized: {track.title} (MP3) - {stars} stars')
+        else:
+            current_stars = mp3_to_plex_rating(current_rating) / 2.0 if current_rating is not None else "no rating"
+            if not TEST_MODE:
+                set_rating(audiofile, mp3_rating)
+                
+                # Verify the change
+                audiofile = MP3(host_path, ID3=ID3)
+                new_rating = get_rating(audiofile)
+                
+                if new_rating == mp3_rating:
+                    justsynced += 1
+                    logger.info(f'Updated MP3: {track.title} to {stars} stars')
+                else:
+                    error += 1
+                    logger.error(f'Failed to update: {track.title}. Expected {stars} stars')
+            else:
+                justsynced += 1
+                logger.info(f'Would update MP3: {track.title} to {stars} stars (currently {current_stars})')
+    else:
+        if current_rating is not None:
+            plex_rating = mp3_to_plex_rating(current_rating)
+            stars = plex_rating / 2.0
+            # Validate rating is within Plex's acceptable range
+            if 0 <= plex_rating <= 10:
+                if not TEST_MODE:
+                    track.rate(plex_rating)
+                    logger.info(f'Updated Plex: {track.title} to {stars} stars')
+                else:
+                    logger.info(f'Would update Plex: {track.title} to {stars} stars (from MP3)')
+                justsynced += 1
+            else:
+                logger.error(f'Invalid rating range for {track.title}: {stars} stars')
+                error += 1
+        else:
+            notag += 1
 
 def process_flac(track, host_path):
-  global insync, justsynced, notag, error
-  
-  try:
-      audiofile = FLAC(host_path)
-  except Exception as e:
-      logger.error(f"Error loading FLAC file: {track.title} - {str(e)}")
-      error += 1
-      return
+    global insync, justsynced, notag, error
+    
+    try:
+        audiofile = FLAC(host_path)
+    except Exception as e:
+        logger.error(f"Error loading FLAC file: {track.title} - {str(e)}")
+        error += 1
+        return
 
-  def plex_to_flac_rating(plex_rating):
-      return str(min(5, max(1, round(plex_rating / 2))))
-
-  def flac_to_plex_rating(flac_rating):
-      return float(flac_rating) * 2
-
-  if isinstance(track.userRating, float):
-      plex_rating_converted = plex_to_flac_rating(track.userRating)
-      
-      current_rating = audiofile.get('RATING', [None])[0]
-      
-      if current_rating == plex_rating_converted:
-          insync += 1
-          logger.debug(f'Synchronized: {track.title} (FLAC)')
-      else:
-          if not TEST_MODE:
-              audiofile['RATING'] = [plex_rating_converted]
-              audiofile.save()
-              
-              # Verify the change
-              audiofile = FLAC(host_path)
-              new_rating = audiofile.get('RATING', [None])[0]
-              if new_rating == plex_rating_converted:
-                  justsynced += 1
-                  logger.debug(f'Updated and verified local FLAC tag: {track.title} with rating {plex_rating_converted}')
-              else:
-                  error += 1
-                  logger.error(f'Failed to update FLAC tag: {track.title}. Expected {plex_rating_converted}, got {new_rating}')
-          else:
-              logger.debug(f'Would update local FLAC tag: {track.title} with rating {plex_rating_converted}')
-  else:
-      current_rating = audiofile.get('RATING', [None])[0]
-      if current_rating:
-          plex_rating = flac_to_plex_rating(float(current_rating))
-          if not TEST_MODE:
-              track.rate(plex_rating)
-          logger.debug(f'Updated Plex: {track.title} (FLAC) with rating {plex_rating}')
-          justsynced += 1
-      else:
-          logger.debug(f'No rating found: {track.title} (FLAC)')
-          notag += 1
-
-  # Final verification
-  audiofile = FLAC(host_path)
-  final_rating = audiofile.get('RATING', [None])[0]
+    if isinstance(track.userRating, float):
+        plex_rating_converted = plex_to_flac_rating(track.userRating)
+        stars = track.userRating / 2.0
+        
+        current_rating = audiofile.get('RATING', [None])[0]
+        
+        # Compare as floats to handle decimal precision
+        try:
+            current_rating_float = float(current_rating) if current_rating else None
+            plex_rating_float = float(plex_rating_converted)
+            
+            if current_rating_float == plex_rating_float:
+                insync += 1
+                logger.debug(f'Synchronized: {track.title} (FLAC) - {stars} stars')
+            else:
+                current_stars = current_rating_float if current_rating_float is not None else "no rating"
+                if not TEST_MODE:
+                    audiofile['RATING'] = [plex_rating_converted]
+                    audiofile.save()
+                    
+                    # Verify the change
+                    audiofile = FLAC(host_path)
+                    new_rating = audiofile.get('RATING', [None])[0]
+                    if new_rating == plex_rating_converted:
+                        justsynced += 1
+                        logger.info(f'Updated FLAC: {track.title} to {stars} stars')
+                    else:
+                        error += 1
+                        logger.error(f'Failed to update FLAC: {track.title}. Expected {stars} stars')
+                else:
+                    justsynced += 1
+                    logger.info(f'Would update FLAC: {track.title} to {stars} stars (currently {current_stars})')
+        except (ValueError, TypeError):
+            logger.error(f'Invalid rating format in FLAC file {track.title}: {current_rating}')
+            error += 1
+            
+    else:
+        current_rating = audiofile.get('RATING', [None])[0]
+        if current_rating:
+            # Add error handling for non-numeric ratings
+            try:
+                plex_rating = flac_to_plex_rating(current_rating)
+                if plex_rating is not None:
+                    stars = plex_rating / 2.0
+                    # Validate rating is within Plex's acceptable range
+                    if 0 <= plex_rating <= 10:
+                        if not TEST_MODE:
+                            track.rate(plex_rating)
+                            logger.info(f'Updated Plex: {track.title} to {stars} stars')
+                        else:
+                            logger.info(f'Would update Plex: {track.title} to {stars} stars (from FLAC)')
+                        justsynced += 1
+                    else:
+                        logger.error(f'Invalid rating range for {track.title}: {stars} stars')
+                        error += 1
+                else:
+                    logger.error(f'Non-numeric rating found in {track.title}: {current_rating}')
+                    error += 1
+            except Exception as e:
+                logger.error(f'Error processing rating for {track.title}: {str(e)}')
+                error += 1
+        else:
+            logger.debug(f'No rating found: {track.title} (FLAC)')
+            notag += 1
 
 # Connect to Plex
 plex = PlexServer(PLEX_URL, PLEX_TOKEN)
 
-logger.debug(f"Connected to Plex server: {plex.friendlyName}")
-logger.debug(f"Accessing library: {PLEX_MUSIC_LIBRARY_NAME}")
+logger.info(f"Connected to Plex server: {plex.friendlyName}")
+logger.info(f"Accessing library: {PLEX_MUSIC_LIBRARY_NAME}")
 
 try:
-  music_library = plex.library.section(PLEX_MUSIC_LIBRARY_NAME)
-  logger.debug(f"Found music library. Total albums: {len(music_library.albums())}")
+    music_library = plex.library.section(PLEX_MUSIC_LIBRARY_NAME)
+    logger.info(f"Found music library. Total albums: {len(music_library.albums())}")
 except Exception as e:
-  logger.error(f"Error accessing music library: {str(e)}")
-  exit(1)
+    logger.error(f"Error accessing music library: {str(e)}")
+    exit(1)
 
 for album in music_library.albums():
-  for track in album.tracks():
-      host_path = translate_path(track.locations[0])
-      
-      if not os.path.exists(host_path):
-          not_found += 1
-          continue
+    for track in album.tracks():
+        host_path = translate_path(track.locations[0])
+        
+        if not os.path.exists(host_path):
+            not_found += 1
+            continue
 
-      if host_path.lower().endswith('.mp3'):
-          process_mp3(track, host_path)
-      elif host_path.lower().endswith('.flac'):
-          process_flac(track, host_path)
-      else:
-          error += 1
+        if host_path.lower().endswith('.mp3'):
+            process_mp3(track, host_path)
+        elif host_path.lower().endswith('.flac'):
+            process_flac(track, host_path)
+        else:
+            error += 1
 
 # Stats Output
 logger.info("\nSummary:")
